@@ -36,7 +36,6 @@ def init_db():
             name TEXT UNIQUE
         )
     ''')
-    # Products table updated to include price
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,17 +129,25 @@ def order_cleaner_engine():
 
 threading.Thread(target=order_cleaner_engine, daemon=True).start()
 
-# ----------------- KEYBOARD MARKUPS -----------------
+# ----------------- KEYBOARD MARKUPS (2-PER-ROW LAYOUT) -----------------
 def get_main_keyboard(user_id):
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM servers")
-    servers = cursor.fetchall()
+    servers = [row[0] for row in cursor.fetchall()]
     conn.close()
     
-    for s in servers:
-        markup.add(types.KeyboardButton(s[0]))
+    # Group servers 2 per row
+    i = 0
+    while i < len(servers):
+        row = []
+        row.append(types.KeyboardButton(servers[i]))
+        i += 1
+        if i < len(servers):
+            row.append(types.KeyboardButton(servers[i]))
+            i += 1
+        markup.row(*row)
         
     if user_id == ADMIN_ID:
         markup.add(types.KeyboardButton("Admin Panel"))
@@ -441,7 +448,6 @@ def handle_all_callbacks(call):
         server_name = cursor.fetchone()[0]
 
         if is_approve:
-            # Log purchase
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute("INSERT INTO purchase_logs (user_id, server_name, product_name, purchased_at) VALUES (?, ?, ?, ?)",
                            (target_user_id, server_name, p_name, current_time))
@@ -451,7 +457,6 @@ def handle_all_callbacks(call):
             bot.answer_callback_query(call.id, "✅ Payment Approved successfully!")
             bot.edit_message_caption("✅ *Payment Approved & Content Delivered!*", chat_id, msg_id, parse_mode="Markdown")
             
-            # Send content to user
             bot.send_message(target_chat_id, f"✅ *Payment Successfully Verified & Approved!*\n\nHere is your product *{p_name}*:", parse_mode="Markdown")
             
             cursor_c = sqlite3.connect("bot_database.db").cursor()
@@ -683,7 +688,7 @@ def handle_all_callbacks(call):
 
     elif call.data == "admin_back_main":
         user_states.pop(user_id, None)
-        bot.delete_message(chat_id, msg_id)
+        bot.delete_image(chat_id, msg_id)
         
     conn.close()
 
