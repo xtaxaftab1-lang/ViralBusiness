@@ -321,6 +321,17 @@ def handle_admin_text_states(message):
             bot.send_message(message.chat.id, "❌ Invalid format! Use: `ProductName,Price`", parse_mode="Markdown")
         user_states.pop(user_id, None)
 
+    elif state["action"] == "waiting_for_content":
+        prod_id = state["product_id"]
+        # Handle text / link input directly
+        cursor.execute("INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
+                       (prod_id, text, "text", text))
+        conn.commit()
+        conn.close()
+        user_states.pop(user_id, None)
+        bot.send_message(message.chat.id, f"✅ Text / Link successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+        return
+
     elif state["action"] == "broadcasting":
         if text == "Finish Sending":
             user_states.pop(user_id, None)
@@ -343,16 +354,16 @@ def handle_admin_text_states(message):
 
     conn.close()
 
-@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID and message.from_user.id in user_states, content_types=['photo', 'video', 'document', 'text'])
+@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID and message.from_user.id in user_states, content_types=['photo', 'video', 'document'])
 def handle_admin_media_states(message):
     user_id = message.from_user.id
     state = user_states[user_id]
     
     if state["action"] == "waiting_for_content":
         prod_id = state["product_id"]
-        file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else message.text)
-        file_type = "photo" if message.photo else ("document" if message.document else "text")
-        caption = message.caption or message.text or ""
+        file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else message.video.file_id)
+        file_type = "photo" if message.photo else ("document" if message.document else "video")
+        caption = message.caption or ""
 
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
@@ -362,7 +373,7 @@ def handle_admin_media_states(message):
         conn.close()
 
         user_states.pop(user_id, None)
-        bot.send_message(message.chat.id, f"✅ Content successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"✅ Media successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
 
 # ----------------- CALLBACK QUERY HANDLERS -----------------
 @bot.callback_query_handler(func=lambda call: True)
@@ -629,7 +640,7 @@ def handle_all_callbacks(call):
         prod_id = call.data.split("_")[3]
         user_states[user_id] = {"action": "waiting_for_content", "product_id": prod_id}
         bot.delete_message(chat_id, msg_id)
-        bot.send_message(chat_id, "📁 Ab is product ke liye video, photo, document ya link bhejein:")
+        bot.send_message(chat_id, "📁 Ab is product ke liye video, photo, document ya text link bhejein:")
 
     elif call.data == "admin_delete_content":
         cursor.execute('''
