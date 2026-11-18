@@ -189,7 +189,7 @@ def handle_user_screenshot_direct(message):
     chat_id = message.chat.id
     
     if message.text and message.text == "Admin Panel":
-        return # Let admin panel open if typed
+        return
 
     file_id = None
     if message.photo:
@@ -474,6 +474,10 @@ def handle_all_callbacks(call):
             cursor.execute("INSERT INTO purchase_logs (user_id, server_name, product_name, purchased_at) VALUES (?, ?, ?, ?)",
                            (target_user_id, server_name, p_name, current_time))
             conn.commit()
+            
+            # Fetch contents to deliver to user
+            cursor.execute("SELECT file_id, file_type, caption FROM contents WHERE product_id = ?", (prod_id,))
+            contents = cursor.fetchall()
             conn.close()
 
             bot.answer_callback_query(call.id, "✅ Payment Approved successfully!")
@@ -481,11 +485,9 @@ def handle_all_callbacks(call):
             
             bot.send_message(target_chat_id, f"✅ *Payment Successfully Verified & Approved!*\n\nHere is your product *{p_name}*:", parse_mode="Markdown")
             
-            cursor_c = sqlite3.connect("bot_database.db").cursor()
-            cursor_c.execute("SELECT file_id, file_type, caption FROM contents WHERE product_id = ?", (prod_id,))
-            contents = cursor_c.fetchall()
-            cursor_c.close()
-
+            if not contents:
+                bot.send_message(target_chat_id, "⚠️ No content files uploaded for this product yet. Contact Admin.")
+            
             for file_id, file_type, caption in contents:
                 try:
                     cap = caption if caption else ""
