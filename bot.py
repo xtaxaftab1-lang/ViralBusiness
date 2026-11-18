@@ -7,7 +7,7 @@ from flask import Flask
 
 # Core Configuration
 BOT_TOKEN = "8893379598:AAEiQjFGVK2ek5-j7J0WD7B7suxqLySKxOg"
-ADMIN_ID = 5883589730
+ADMIN_ID = 8213077389
 
 bot = telebot.TeleBot(BOT_TOKEN)
 user_states = {}
@@ -110,9 +110,7 @@ def send_welcome(message):
     "actress viral aft", "Trending Poem Videos", 
     "Trending Viral Leak aft"
 ])
-handle_categories = lambda message: fetch_category_content(message)
-
-def fetch_category_content(message):
+def handle_categories(message):
     category_name = message.text
     chat_id = message.chat.id
     
