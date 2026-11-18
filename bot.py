@@ -173,7 +173,6 @@ def send_welcome_message(chat_id, user_info):
 def send_welcome(message):
     user_id = message.from_user.id
     
-    # Cancel any active pending order on /start
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
@@ -183,57 +182,26 @@ def send_welcome(message):
     user_states.pop(user_id, None)
     send_welcome_message(message.chat.id, message.from_user)
 
-# ----------------- USER FLOW & TEXT HANDLERS -----------------
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def handle_text_messages(message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    text = message.text.strip()
-
-    if text == "Admin Panel" and user_id == ADMIN_ID:
-        bot.send_message(chat_id, "🔧 *Admin Control Panel:*", reply_markup=get_admin_inline(), parse_mode="Markdown")
-        return
-
-    conn = sqlite3.connect("bot_database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM servers WHERE name = ?", (text,))
-    server = cursor.fetchone()
-    
-    if server:
-        # Cancel any pending order if user switches to another server
-        cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
-        user_states.pop(user_id, None)
-        conn.commit()
-
-        server_id = server[0]
-        cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
-        products = cursor.fetchall()
-        conn.close()
-
-        if not products:
-            bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nAbhi is server mein koi Products add nahi kiye gaye hain!", parse_mode="Markdown")
-            return
-
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for p in products:
-            markup.add(types.InlineKeyboardButton(f"📦 {p[1]} - ₹{p[2]}", callback_data=f"buy_prod_{p[0]}"))
-        bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nSelect a Product below to buy:", reply_markup=markup, parse_mode="Markdown")
-    else:
-        conn.close()
-        if user_id == ADMIN_ID and user_id in user_states:
-            handle_admin_text_states(message)
-        elif user_id in user_states and user_states[user_id].get("action") == "waiting_for_payment_screenshot":
-            handle_user_screenshot(message)
-
-def handle_user_screenshot(message):
+# ----------------- DEDICATED SCREENSHOT HANDLER FOR USERS -----------------
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get("action") == "waiting_for_payment_screenshot", content_types=['photo', 'document', 'text'])
+def handle_user_screenshot_direct(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
     
-    if not message.photo and not message.document and not message.text:
+    if message.text and message.text == "Admin Panel":
+        return # Let admin panel open if typed
+
+    file_id = None
+    if message.photo:
+        file_id = message.photo[-1].file_id
+    elif message.document:
+        file_id = message.document.file_id
+    elif message.text:
+        file_id = message.text
+
+    if not file_id:
         bot.send_message(chat_id, "⚠️ Please send payment screenshot.")
         return
-
-    file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else message.text)
     
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
@@ -277,6 +245,45 @@ def handle_user_screenshot(message):
         bot.send_photo(ADMIN_ID, file_id, caption=admin_msg, reply_markup=markup, parse_mode="Markdown")
     except Exception:
         bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup, parse_mode="Markdown")
+
+# ----------------- GENERAL TEXT HANDLERS -----------------
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_text_messages(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if text == "Admin Panel" and user_id == ADMIN_ID:
+        bot.send_message(chat_id, "🔧 *Admin Control Panel:*", reply_markup=get_admin_inline(), parse_mode="Markdown")
+        return
+
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM servers WHERE name = ?", (text,))
+    server = cursor.fetchone()
+    
+    if server:
+        cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
+        user_states.pop(user_id, None)
+        conn.commit()
+
+        server_id = server[0]
+        cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
+        products = cursor.fetchall()
+        conn.close()
+
+        if not products:
+            bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nAbhi is server mein koi Products add nahi kiye gaye hain!", parse_mode="Markdown")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for p in products:
+            markup.add(types.InlineKeyboardButton(f"📦 {p[1]} - ₹{p[2]}", callback_data=f"buy_prod_{p[0]}"))
+        bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nSelect a Product below to buy:", reply_markup=markup, parse_mode="Markdown")
+    else:
+        conn.close()
+        if user_id == ADMIN_ID and user_id in user_states:
+            handle_admin_text_states(message)
 
 def handle_admin_text_states(message):
     user_id = message.from_user.id
@@ -688,7 +695,7 @@ def handle_all_callbacks(call):
         cursor.execute("SELECT COUNT(*) FROM purchase_logs")
         total_buyers = cursor.fetchone()[0]
         conn.close()
-        bot.answer_callback_query(call.id, f"Users: {total_users} | Products: {total_prods} | Purchases: {total_buyers}", show_arg=True)
+        bot.answer_callback_query(call.id, f"Users: {total_users} | Products: {total_prods} | Purchases: {total_buyers}", show_alert=True)
 
     elif call.data == "admin_broadcast":
         user_states[user_id] = {"action": "broadcasting"}
