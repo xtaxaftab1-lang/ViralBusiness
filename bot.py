@@ -3,7 +3,6 @@ from telebot import types
 import sqlite3
 import datetime
 import threading
-import time
 import os
 import qrcode
 from flask import Flask
@@ -61,8 +60,7 @@ def init_db():
             user_id INTEGER,
             product_id INTEGER,
             chat_id INTEGER,
-            price INTEGER,
-            expires_at REAL
+            price INTEGER
         )
     ''')
     cursor.execute('''
@@ -105,30 +103,6 @@ def init_db():
 
 init_db()
 
-# ----------------- BACKGROUND PENDING ORDER CLEANER -----------------
-def order_cleaner_engine():
-    while True:
-        current_time = time.time()
-        try:
-            conn = sqlite3.connect("bot_database.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT order_id, chat_id FROM pending_orders WHERE expires_at < ?", (current_time,))
-            expired_orders = cursor.fetchall()
-            
-            for order_id, chat_id in expired_orders:
-                cursor.execute("DELETE FROM pending_orders WHERE order_id = ?", (order_id,))
-                conn.commit()
-                try:
-                    bot.send_message(chat_id, f"❌ *Payment Session Expired!*\n\nOrder ID: `{order_id}`\nPayment 5 minute mein complete nahi hui, isliye session cancel ho gaya.", parse_mode="Markdown")
-                except Exception:
-                    pass
-            conn.close()
-        except Exception as e:
-            print(f"Cleaner Error: {e}")
-        time.sleep(10)
-
-threading.Thread(target=order_cleaner_engine, daemon=True).start()
-
 # ----------------- KEYBOARD MARKUPS (2-PER-ROW LAYOUT) -----------------
 def get_main_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -138,7 +112,6 @@ def get_main_keyboard(user_id):
     servers = [row[0] for row in cursor.fetchall()]
     conn.close()
     
-    # Group servers 2 per row
     i = 0
     while i < len(servers):
         row = []
@@ -199,6 +172,14 @@ def send_welcome_message(chat_id, user_info):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
+    
+    # Cancel any active pending order on /start
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    
     user_states.pop(user_id, None)
     send_welcome_message(message.chat.id, message.from_user)
 
@@ -219,6 +200,11 @@ def handle_text_messages(message):
     server = cursor.fetchone()
     
     if server:
+        # Cancel any pending order if user switches to another server
+        cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
+        user_states.pop(user_id, None)
+        conn.commit()
+
         server_id = server[0]
         cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
         products = cursor.fetchall()
@@ -244,7 +230,7 @@ def handle_user_screenshot(message):
     chat_id = message.chat.id
     
     if not message.photo and not message.document and not message.text:
-        bot.send_message(chat_id, "⚠️ Please send payment screenshot or UTR text.")
+        bot.send_message(chat_id, "⚠️ Please send payment screenshot.")
         return
 
     file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else message.text)
@@ -268,7 +254,7 @@ def handle_user_screenshot(message):
     conn.close()
 
     user_states.pop(user_id, None)
-    bot.send_message(chat_id, "⏳ *Screenshot Received!*\n\nYour payment details have been sent to Admin for approval. Please wait...", parse_mode="Markdown")
+    bot.send_message(chat_id, "⏳ *Screenshot Received!*\n\nYour payment screenshot has been sent to Admin for approval. Please wait...", parse_mode="Markdown")
 
     # Notify Admin
     cursor_a = sqlite3.connect("bot_database.db").cursor()
@@ -396,10 +382,9 @@ def handle_all_callbacks(call):
         qr_filename = f"qr_{user_id}.png"
         qr_img.save(qr_filename)
         
-        expiry_time = time.time() + 300 # 5 minutes
         cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
-        cursor.execute("INSERT INTO pending_orders (order_id, user_id, product_id, chat_id, price, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-                       (order_id, user_id, prod_id, chat_id, price, expiry_time))
+        cursor.execute("INSERT INTO pending_orders (order_id, user_id, product_id, chat_id, price) VALUES (?, ?, ?, ?, ?)",
+                       (order_id, user_id, prod_id, chat_id, price))
         conn.commit()
         conn.close()
 
@@ -410,11 +395,14 @@ def handle_all_callbacks(call):
             f"🆔 Order ID: `{order_id}`\n\n"
             f"📌 *Instructions:*\n"
             f"1. Scan QR code and pay ₹{price}.\n"
-            f"2. Send payment **Screenshot** or **UTR** here within 5 minutes."
+            f"2. Send payment **Screenshot** here."
         )
         
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("❌ Cancel Payment", callback_data=f"cancel_pay_{s_id}"))
+
         with open(qr_filename, 'rb') as photo:
-            bot.send_photo(chat_id, photo, caption=invoice_text, parse_mode="Markdown")
+            bot.send_photo(chat_id, photo, caption=invoice_text, reply_markup=markup, parse_mode="Markdown")
         
         try:
             bot.delete_message(chat_id, msg_id)
@@ -423,6 +411,33 @@ def handle_all_callbacks(call):
         os.remove(qr_filename)
         
         user_states[user_id] = {"action": "waiting_for_payment_screenshot"}
+        return
+
+    # --- CANCEL PAYMENT FLOW ---
+    if call.data.startswith("cancel_pay_"):
+        server_id = call.data.split("_")[2]
+        cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
+        conn.commit()
+        user_states.pop(user_id, None)
+
+        cursor.execute("SELECT name FROM servers WHERE id = ?", (server_id,))
+        s_data = cursor.fetchone()
+        server_name = s_data[0] if s_data else "Server"
+
+        cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
+        products = cursor.fetchall()
+        conn.close()
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for p in products:
+            markup.add(types.InlineKeyboardButton(f"📦 {p[1]} - ₹{p[2]}", callback_data=f"buy_prod_{p[0]}"))
+
+        try:
+            bot.delete_message(chat_id, msg_id)
+        except Exception:
+            pass
+
+        bot.send_message(chat_id, f"❌ *Payment Cancelled.*\n\n🌐 *Server: {server_name}*\nSelect a Product below:", reply_markup=markup, parse_mode="Markdown")
         return
 
     # --- ADMIN PAYMENT APPROVALS FLOW ---
@@ -673,7 +688,7 @@ def handle_all_callbacks(call):
         cursor.execute("SELECT COUNT(*) FROM purchase_logs")
         total_buyers = cursor.fetchone()[0]
         conn.close()
-        bot.answer_callback_query(call.id, f"Users: {total_users} | Products: {total_prods} | Purchases: {total_buyers}", show_alert=True)
+        bot.answer_callback_query(call.id, f"Users: {total_users} | Products: {total_prods} | Purchases: {total_buyers}", show_arg=True)
 
     elif call.data == "admin_broadcast":
         user_states[user_id] = {"action": "broadcasting"}
@@ -688,7 +703,7 @@ def handle_all_callbacks(call):
 
     elif call.data == "admin_back_main":
         user_states.pop(user_id, None)
-        bot.delete_image(chat_id, msg_id)
+        bot.delete_message(chat_id, msg_id)
         
     conn.close()
 
