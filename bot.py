@@ -98,11 +98,11 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM servers")
     if cursor.fetchone()[0] == 0:
         default_servers = [
-            "insta viral aft",
-            "YouTubers Viral aft",
-            "actress viral aft",
+            "insta viral mms",
+            "YouTubers Viral mms",
+            "actress viral mms",
             "Trending Poem Videos",
-            "Trending Viral Leak aft"
+            "Trending Viral Leak mms"
         ]
         for s in default_servers:
             cursor.execute("INSERT OR IGNORE INTO servers (name) VALUES (?)", (s,))
@@ -124,11 +124,11 @@ def get_main_keyboard(user_id):
     conn.close()
 
     ordered_names = [
-        "insta viral aft",
-        "YouTubers Viral aft",
-        "actress viral aft",
-        "Trending Poem Videos",
-        "Trending Viral Leak aft"
+        "Insta viral mms",
+        "YouTubers Viral mms",
+        "actress viral mms",
+        "Trending Porn Videos",
+        "Trending Viral Leak mms"
     ]
     final_servers = []
     for name in ordered_names:
@@ -485,7 +485,7 @@ def handle_all_callbacks(call):
         p_name, price, s_id = p_data
         order_id = f"ORDER{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{user_id}"
 
-        upi_url = f"upi://pay?pa={MERCHANT_UPI}&pn=Aftab&am={price}&cu=INR&tn={order_id}"
+        upi_url = f"upi://pay?pa={MERCHANT_UPI}&pn=Mafia&am={price}&cu=INR&tn={order_id}"
         qr_img = qrcode.make(upi_url)
         qr_filename = f"qr_{user_id}.png"
         qr_img.save(qr_filename)
