@@ -32,9 +32,15 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS servers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE
+            name TEXT UNIQUE,
+            page_text TEXT DEFAULT NULL
         )
     ''')
+    try:
+        cursor.execute("ALTER TABLE servers ADD COLUMN page_text TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +91,6 @@ def init_db():
     ''')
     conn.commit()
     
-    # Insert default servers if empty
     cursor.execute("SELECT COUNT(*) FROM servers")
     if cursor.fetchone()[0] == 0:
         default_servers = [
@@ -132,6 +137,7 @@ def get_admin_inline():
         types.InlineKeyboardButton("➕ Add Product", callback_data="admin_add_product"),
         types.InlineKeyboardButton("📝 Edit Product", callback_data="admin_edit_product"),
         types.InlineKeyboardButton("❌ Delete Product", callback_data="admin_delete_product"),
+        types.InlineKeyboardButton("📄 Edit Product Page", callback_data="admin_edit_product_page"),
         types.InlineKeyboardButton("📁 Add Content or Link", callback_data="admin_add_content"),
         types.InlineKeyboardButton("✏️ Edit Content or Link", callback_data="admin_edit_content"),
         types.InlineKeyboardButton("🗑️ Delete Content or Link", callback_data="admin_delete_content"),
@@ -182,27 +188,29 @@ def send_welcome(message):
     user_states.pop(user_id, None)
     send_welcome_message(message.chat.id, message.from_user)
 
-# ----------------- DEDICATED SCREENSHOT HANDLER FOR USERS -----------------
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get("action") == "waiting_for_payment_screenshot", content_types=['photo', 'document', 'text'])
+# ----------------- PAYMENT SCREENSHOT HANDLER (PHOTO ONLY) -----------------
+@bot.message_handler(
+    func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get("action") == "waiting_for_payment_screenshot",
+    content_types=['photo', 'document', 'video', 'audio', 'voice', 'sticker', 'text']
+)
 def handle_user_screenshot_direct(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
-    
-    if message.text and message.text == "Admin Panel":
+
+    if message.text and message.text == "Admin Panel" and user_id == ADMIN_ID:
         return
 
-    file_id = None
-    if message.photo:
-        file_id = message.photo[-1].file_id
-    elif message.document:
-        file_id = message.document.file_id
-    elif message.text:
-        file_id = message.text
-
-    if not file_id:
-        bot.send_message(chat_id, "⚠️ Please send payment screenshot.")
+    # Only accept photo as payment screenshot
+    if not message.photo:
+        bot.send_message(
+            chat_id,
+            "⚠️ *Please send a Payment Screenshot (Photo)!*\n\nText ya kisi aur file ke bajay payment ka clear screenshot photo bhejein.",
+            parse_mode="Markdown"
+        )
         return
-    
+
+    file_id = message.photo[-1].file_id
+
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
     cursor.execute("SELECT order_id, product_id, price FROM pending_orders WHERE user_id = ?", (user_id,))
@@ -215,19 +223,27 @@ def handle_user_screenshot_direct(message):
         return
 
     order_id, prod_id, price = order
-    cursor.execute("INSERT INTO pending_approvals (order_id, user_id, product_id, chat_id, price, screenshot_file_id) VALUES (?, ?, ?, ?, ?, ?)",
-                   (order_id, user_id, prod_id, chat_id, price, file_id))
+    cursor.execute(
+        "INSERT INTO pending_approvals (order_id, user_id, product_id, chat_id, price, screenshot_file_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (order_id, user_id, prod_id, chat_id, price, file_id)
+    )
     cursor.execute("DELETE FROM pending_orders WHERE order_id = ?", (order_id,))
     conn.commit()
     conn.close()
 
     user_states.pop(user_id, None)
-    bot.send_message(chat_id, "⏳ *Screenshot Received!*\n\nYour payment screenshot has been sent to Admin for approval. Please wait...", parse_mode="Markdown")
+    bot.send_message(
+        chat_id,
+        "⏳ *Screenshot Received!*\n\nYour payment screenshot has been sent to Admin for approval. Please wait...",
+        parse_mode="Markdown"
+    )
 
     # Notify Admin
     cursor_a = sqlite3.connect("bot_database.db").cursor()
     cursor_a.execute("SELECT name FROM products WHERE id = ?", (prod_id,))
-    p_name = cursor_a.fetchone()[0]
+    p_row = cursor_a.fetchone()
+    p_name = p_row[0] if p_row else "Product"
+    cursor_a.connection.close()
 
     admin_msg = (
         f"🔔 *New Payment Approval Request!*\n\n"
@@ -259,7 +275,7 @@ def handle_text_messages(message):
 
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM servers WHERE name = ?", (text,))
+    cursor.execute("SELECT id, name, page_text FROM servers WHERE name = ?", (text,))
     server = cursor.fetchone()
     
     if server:
@@ -267,19 +283,21 @@ def handle_text_messages(message):
         user_states.pop(user_id, None)
         conn.commit()
 
-        server_id = server[0]
+        server_id, s_name, custom_page_text = server
         cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
         products = cursor.fetchall()
         conn.close()
 
         if not products:
-            bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nAbhi is server mein koi Products add nahi kiye gaye hain!", parse_mode="Markdown")
+            bot.send_message(chat_id, f"🌐 *Server: {s_name}*\n\nAbhi is server mein koi Products add nahi kiye gaye hain!", parse_mode="Markdown")
             return
 
         markup = types.InlineKeyboardMarkup(row_width=1)
         for p in products:
             markup.add(types.InlineKeyboardButton(f"📦 {p[1]} - ₹{p[2]}", callback_data=f"buy_prod_{p[0]}"))
-        bot.send_message(chat_id, f"🌐 *Server: {text}*\n\nSelect a Product below to buy:", reply_markup=markup, parse_mode="Markdown")
+
+        header_text = custom_page_text if custom_page_text else f"🌐 *Server: {s_name}*\n\nSelect a Product below to buy:"
+        bot.send_message(chat_id, header_text, reply_markup=markup, parse_mode="Markdown")
     else:
         conn.close()
         if user_id == ADMIN_ID and user_id in user_states:
@@ -321,15 +339,21 @@ def handle_admin_text_states(message):
             bot.send_message(message.chat.id, "❌ Invalid format! Use: `ProductName,Price`", parse_mode="Markdown")
         user_states.pop(user_id, None)
 
+    elif state["action"] == "editing_product_page":
+        server_id = state["server_id"]
+        cursor.execute("UPDATE servers SET page_text = ? WHERE id = ?", (text, server_id))
+        conn.commit()
+        bot.send_message(message.chat.id, "✅ *Product Page successfully updated!*", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+        user_states.pop(user_id, None)
+
     elif state["action"] == "waiting_for_content":
         prod_id = state["product_id"]
-        # Handle text / link input directly
         cursor.execute("INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
                        (prod_id, text, "text", text))
         conn.commit()
         conn.close()
         user_states.pop(user_id, None)
-        bot.send_message(message.chat.id, f"✅ Text / Link successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+        bot.send_message(message.chat.id, "✅ Text / Link successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
         return
 
     elif state["action"] == "broadcasting":
@@ -373,7 +397,7 @@ def handle_admin_media_states(message):
         conn.close()
 
         user_states.pop(user_id, None)
-        bot.send_message(message.chat.id, f"✅ Media successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+        bot.send_message(message.chat.id, "✅ Media successfully added to product!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
 
 # ----------------- CALLBACK QUERY HANDLERS -----------------
 @bot.callback_query_handler(func=lambda call: True)
@@ -438,9 +462,10 @@ def handle_all_callbacks(call):
         conn.commit()
         user_states.pop(user_id, None)
 
-        cursor.execute("SELECT name FROM servers WHERE id = ?", (server_id,))
+        cursor.execute("SELECT name, page_text FROM servers WHERE id = ?", (server_id,))
         s_data = cursor.fetchone()
         server_name = s_data[0] if s_data else "Server"
+        custom_page_text = s_data[1] if s_data else None
 
         cursor.execute("SELECT id, name, price FROM products WHERE server_id = ?", (server_id,))
         products = cursor.fetchall()
@@ -455,7 +480,8 @@ def handle_all_callbacks(call):
         except Exception:
             pass
 
-        bot.send_message(chat_id, f"❌ *Payment Cancelled.*\n\n🌐 *Server: {server_name}*\nSelect a Product below:", reply_markup=markup, parse_mode="Markdown")
+        page_header = custom_page_text if custom_page_text else f"🌐 *Server: {server_name}*\nSelect a Product below:"
+        bot.send_message(chat_id, f"❌ *Payment Cancelled.*\n\n{page_header}", reply_markup=markup, parse_mode="Markdown")
         return
 
     # --- ADMIN PAYMENT APPROVALS FLOW ---
@@ -486,7 +512,6 @@ def handle_all_callbacks(call):
                            (target_user_id, server_name, p_name, current_time))
             conn.commit()
             
-            # Fetch contents to deliver to user
             cursor.execute("SELECT file_id, file_type, caption FROM contents WHERE product_id = ?", (prod_id,))
             contents = cursor.fetchall()
             conn.close()
@@ -517,11 +542,38 @@ def handle_all_callbacks(call):
             conn.close()
             bot.answer_callback_query(call.id, "❌ Payment Declined!")
             bot.edit_message_caption("❌ *Payment Declined by Admin.*", chat_id, msg_id, parse_mode="Markdown")
-            bot.send_message(target_chat_id, "❌ *Your payment was declined by Admin.*\nIf you think this is a mistake, contact support.", parse_mode="Markdown")
+            bot.send_message(
+                target_chat_id,
+                f"❌ *Payment Declined!*\n\nYour payment for *{p_name}* (`{order_id}`) was declined (wrong payment / not received). Please check and pay properly or contact support.",
+                parse_mode="Markdown"
+            )
         return
 
     # --- ADMIN PANEL OPTIONS ---
-    if call.data == "admin_payment_approvals":
+    if call.data == "admin_edit_product_page":
+        cursor.execute("SELECT id, name FROM servers")
+        servers = cursor.fetchall()
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for s in servers:
+            markup.add(types.InlineKeyboardButton(s[1], callback_data=f"edit_page_srv_{s[0]}"))
+        markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+        bot.edit_message_text("📄 Select Server whose Product Page you want to edit:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("edit_page_srv_"):
+        server_id = call.data.split("_")[3]
+        cursor.execute("SELECT name, page_text FROM servers WHERE id = ?", (server_id,))
+        s_row = cursor.fetchone()
+        s_name = s_row[0] if s_row else "Server"
+        current_txt = s_row[1] if (s_row and s_row[1]) else f"🌐 *Server: {s_name}*\n\nSelect a Product below to buy:"
+        user_states[user_id] = {"action": "editing_product_page", "server_id": server_id}
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(
+            chat_id,
+            f"✏️ *Editing Product Page for {s_name}*\n\nCurrent Text:\n`{current_txt}`\n\nNaya text bhejein jo upar dikhega:",
+            parse_mode="Markdown"
+        )
+
+    elif call.data == "admin_payment_approvals":
         cursor.execute('''
             SELECT pending_approvals.user_id, pending_approvals.order_id, products.name, pending_approvals.price, users.name 
             FROM pending_approvals 
