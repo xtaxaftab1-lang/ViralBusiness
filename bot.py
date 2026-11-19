@@ -4,6 +4,7 @@ import sqlite3
 import datetime
 import threading
 import os
+import traceback
 import qrcode
 from flask import Flask
 
@@ -17,11 +18,12 @@ MERCHANT_UPI = "paytm.s2wyw5w@pty"
 bot = telebot.TeleBot(BOT_TOKEN)
 user_states = {}
 
+
 # ----------------- DATABASE MANAGEMENT SYSTEM -----------------
 def init_db():
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -92,23 +94,25 @@ def init_db():
         )
     ''')
     conn.commit()
-    
+
     cursor.execute("SELECT COUNT(*) FROM servers")
     if cursor.fetchone()[0] == 0:
         default_servers = [
-            "insta viral aft", 
-            "YouTubers Viral aft", 
-            "actress viral aft", 
-            "Trending Poem Videos", 
+            "insta viral aft",
+            "YouTubers Viral aft",
+            "actress viral aft",
+            "Trending Poem Videos",
             "Trending Viral Leak aft"
         ]
         for s in default_servers:
             cursor.execute("INSERT OR IGNORE INTO servers (name) VALUES (?)", (s,))
         conn.commit()
-        
+
     conn.close()
 
+
 init_db()
+
 
 # ----------------- KEYBOARD MARKUPS (EXACT LAYOUT) -----------------
 def get_main_keyboard(user_id):
@@ -142,10 +146,11 @@ def get_main_keyboard(user_id):
         else:
             markup.row(types.KeyboardButton(final_servers[i]))
             i += 1
-        
+
     if user_id in ALL_STAFF_IDS:
         markup.row(types.KeyboardButton("Admin Panel"))
     return markup
+
 
 def get_admin_inline(user_id):
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -172,6 +177,7 @@ def get_admin_inline(user_id):
         markup.add(b)
     return markup
 
+
 # ----------------- WELCOME HANDLER -----------------
 def send_welcome_message(chat_id, user_info):
     user_id = user_info.id
@@ -183,8 +189,10 @@ def send_welcome_message(chat_id, user_info):
     cursor = conn.cursor()
     cursor.execute("SELECT join_date FROM users WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (user_id, name, username, join_date, status) VALUES (?, ?, ?, ?, 'Active')", 
-                       (user_id, user_name, username, current_date))
+        cursor.execute(
+            "INSERT INTO users (user_id, name, username, join_date, status) VALUES (?, ?, ?, ?, 'Active')",
+            (user_id, user_name, username, current_date)
+        )
     else:
         cursor.execute("UPDATE users SET username = ?, name = ? WHERE user_id = ?", (username, user_name, user_id))
     conn.commit()
@@ -197,18 +205,20 @@ def send_welcome_message(chat_id, user_info):
     )
     bot.send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
 
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
-    
+
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-    
+
     user_states.pop(user_id, None)
     send_welcome_message(message.chat.id, message.from_user)
+
 
 # ----------------- PAYMENT SCREENSHOT HANDLER (PHOTO ONLY) -----------------
 @bot.message_handler(
@@ -284,6 +294,7 @@ def handle_user_screenshot_direct(message):
             except Exception:
                 pass
 
+
 # ----------------- GENERAL TEXT HANDLERS -----------------
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
@@ -299,7 +310,7 @@ def handle_text_messages(message):
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, page_text FROM servers WHERE name = ?", (text,))
     server = cursor.fetchone()
-    
+
     if server:
         cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
         user_states.pop(user_id, None)
@@ -325,11 +336,12 @@ def handle_text_messages(message):
         if user_id in ALL_STAFF_IDS and user_id in user_states:
             handle_admin_text_states(message)
 
+
 def handle_admin_text_states(message):
     user_id = message.from_user.id
     state = user_states[user_id]
     text = message.text.strip()
-    
+
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
 
@@ -339,7 +351,7 @@ def handle_admin_text_states(message):
             p_name = parts[0].strip()
             p_price = int(parts[1].strip())
             server_id = state["server_id"]
-            
+
             cursor.execute("INSERT INTO products (server_id, name, price) VALUES (?, ?, ?)", (server_id, p_name, p_price))
             conn.commit()
             bot.send_message(message.chat.id, f"✅ Product *{p_name}* (₹{p_price}) added successfully!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
@@ -353,7 +365,7 @@ def handle_admin_text_states(message):
             p_name = parts[0].strip()
             p_price = int(parts[1].strip())
             prod_id = state["product_id"]
-            
+
             cursor.execute("UPDATE products SET name = ?, price = ? WHERE id = ?", (p_name, p_price, prod_id))
             conn.commit()
             bot.send_message(message.chat.id, f"✅ Product updated to *{p_name}* (₹{p_price})!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
@@ -370,8 +382,10 @@ def handle_admin_text_states(message):
 
     elif state["action"] == "waiting_for_content":
         prod_id = state["product_id"]
-        cursor.execute("INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
-                       (prod_id, text, "text", text))
+        cursor.execute(
+            "INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
+            (prod_id, text, "text", text)
+        )
         conn.commit()
         conn.close()
         user_states.pop(user_id, None)
@@ -380,8 +394,10 @@ def handle_admin_text_states(message):
 
     elif state["action"] == "editing_content":
         content_id = state["content_id"]
-        cursor.execute("UPDATE contents SET file_id = ?, file_type = ?, caption = ? WHERE id = ?",
-                       (text, "text", text, content_id))
+        cursor.execute(
+            "UPDATE contents SET file_id = ?, file_type = ?, caption = ? WHERE id = ?",
+            (text, "text", text, content_id)
+        )
         conn.commit()
         conn.close()
         user_states.pop(user_id, None)
@@ -394,7 +410,7 @@ def handle_admin_text_states(message):
             bot.send_message(message.chat.id, "✅ Broadcast completed.", reply_markup=get_main_keyboard(user_id))
             conn.close()
             return
-            
+
         cursor.execute("SELECT user_id FROM users")
         users = cursor.fetchall()
         success = 0
@@ -410,11 +426,12 @@ def handle_admin_text_states(message):
 
     conn.close()
 
+
 @bot.message_handler(func=lambda message: message.from_user.id in ALL_STAFF_IDS and message.from_user.id in user_states, content_types=['photo', 'video', 'document'])
 def handle_admin_media_states(message):
     user_id = message.from_user.id
     state = user_states[user_id]
-    
+
     file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else message.video.file_id)
     file_type = "photo" if message.photo else ("document" if message.document else "video")
     caption = message.caption or ""
@@ -423,8 +440,10 @@ def handle_admin_media_states(message):
         prod_id = state["product_id"]
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
-                       (prod_id, file_id, file_type, caption))
+        cursor.execute(
+            "INSERT INTO contents (product_id, file_id, file_type, caption) VALUES (?, ?, ?, ?)",
+            (prod_id, file_id, file_type, caption)
+        )
         conn.commit()
         conn.close()
 
@@ -435,13 +454,16 @@ def handle_admin_media_states(message):
         content_id = state["content_id"]
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
-        cursor.execute("UPDATE contents SET file_id = ?, file_type = ?, caption = ? WHERE id = ?",
-                       (file_id, file_type, caption, content_id))
+        cursor.execute(
+            "UPDATE contents SET file_id = ?, file_type = ?, caption = ? WHERE id = ?",
+            (file_id, file_type, caption, content_id)
+        )
         conn.commit()
         conn.close()
 
         user_states.pop(user_id, None)
         bot.send_message(message.chat.id, "✅ Content successfully updated!", reply_markup=get_main_keyboard(user_id), parse_mode="Markdown")
+
 
 # ----------------- CALLBACK QUERY HANDLERS -----------------
 @bot.callback_query_handler(func=lambda call: True)
@@ -459,18 +481,20 @@ def handle_all_callbacks(call):
             bot.answer_callback_query(call.id, "Product not found!", show_alert=True)
             conn.close()
             return
-        
+
         p_name, price, s_id = p_data
         order_id = f"ORDER{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{user_id}"
-        
+
         upi_url = f"upi://pay?pa={MERCHANT_UPI}&pn=Aftab&am={price}&cu=INR&tn={order_id}"
         qr_img = qrcode.make(upi_url)
         qr_filename = f"qr_{user_id}.png"
         qr_img.save(qr_filename)
-        
+
         cursor.execute("DELETE FROM pending_orders WHERE user_id = ?", (user_id,))
-        cursor.execute("INSERT INTO pending_orders (order_id, user_id, product_id, chat_id, price) VALUES (?, ?, ?, ?, ?)",
-                       (order_id, user_id, prod_id, chat_id, price))
+        cursor.execute(
+            "INSERT INTO pending_orders (order_id, user_id, product_id, chat_id, price) VALUES (?, ?, ?, ?, ?)",
+            (order_id, user_id, prod_id, chat_id, price)
+        )
         conn.commit()
         conn.close()
 
@@ -483,19 +507,19 @@ def handle_all_callbacks(call):
             f"1. Scan QR code and pay ₹{price}.\n"
             f"2. Send payment **Screenshot** here."
         )
-        
+
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("❌ Cancel Payment", callback_data=f"cancel_pay_{s_id}"))
 
         with open(qr_filename, 'rb') as photo:
             bot.send_photo(chat_id, photo, caption=invoice_text, reply_markup=markup, parse_mode="Markdown")
-        
+
         try:
             bot.delete_message(chat_id, msg_id)
         except Exception:
             pass
         os.remove(qr_filename)
-        
+
         user_states[user_id] = {"action": "waiting_for_payment_screenshot"}
         return
 
@@ -548,7 +572,7 @@ def handle_all_callbacks(call):
 
         app_id, order_id, prod_id, target_chat_id = approval
         cursor.execute("DELETE FROM pending_approvals WHERE approval_id = ?", (app_id,))
-        
+
         cursor.execute("SELECT name, server_id FROM products WHERE id = ?", (prod_id,))
         p_info = cursor.fetchone()
         p_name = p_info[0] if p_info else "Product"
@@ -562,10 +586,12 @@ def handle_all_callbacks(call):
 
         if is_approve:
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute("INSERT INTO purchase_logs (user_id, server_name, product_name, purchased_at) VALUES (?, ?, ?, ?)",
-                           (target_user_id, server_name, p_name, current_time))
+            cursor.execute(
+                "INSERT INTO purchase_logs (user_id, server_name, product_name, purchased_at) VALUES (?, ?, ?, ?)",
+                (target_user_id, server_name, p_name, current_time)
+            )
             conn.commit()
-            
+
             cursor.execute("SELECT file_id, file_type, caption FROM contents WHERE product_id = ?", (prod_id,))
             contents = cursor.fetchall()
             conn.close()
@@ -575,12 +601,12 @@ def handle_all_callbacks(call):
                 bot.edit_message_caption("✅ *Payment Approved & Content Delivered!*", chat_id, msg_id, parse_mode="Markdown")
             except Exception:
                 pass
-            
+
             bot.send_message(target_chat_id, f"✅ *Payment Successfully Verified & Approved!*\n\nHere is your product *{p_name}*:", parse_mode="Markdown")
-            
+
             if not contents:
                 bot.send_message(target_chat_id, "⚠️ No content files uploaded for this product yet. Contact Admin.")
-            
+
             for file_id, file_type, caption in contents:
                 try:
                     cap = caption if caption else ""
@@ -593,7 +619,7 @@ def handle_all_callbacks(call):
                     else:
                         bot.send_message(target_chat_id, file_id)
                 except Exception as e:
-                    print(f"Error sending content: {e}")
+                    print(f"Error sending content: {e}", flush=True)
         else:
             conn.commit()
             conn.close()
@@ -649,7 +675,7 @@ def handle_all_callbacks(call):
             bot.answer_callback_query(call.id, "No pending payments waiting for approval!", show_alert=True)
             conn.close()
             return
-        
+
         markup = types.InlineKeyboardMarkup(row_width=1)
         for a in approvals:
             u_name = a[4] or "User"
@@ -693,3 +719,210 @@ def handle_all_callbacks(call):
             markup.add(types.InlineKeyboardButton(s[1], callback_data=f"add_prod_srv_{s[0]}"))
         markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
         bot.edit_message_text("Select Server to add Product:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("add_prod_srv_"):
+        server_id = call.data.split("_")[3]
+        user_states[user_id] = {"action": "adding_product", "server_id": server_id}
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(chat_id, "➕ Type Product Name and Price in format:\n`ProductName,Price` (e.g. `VIP Access,199`)", parse_mode="Markdown")
+
+    elif call.data == "admin_edit_product":
+        cursor.execute("SELECT id, name, price FROM products")
+        prods = cursor.fetchall()
+        if not prods:
+            bot.answer_callback_query(call.id, "No products available to edit!", show_alert=True)
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for p in prods:
+                markup.add(types.InlineKeyboardButton(f"{p[1]} (₹{p[2]})", callback_data=f"edit_prod_{p[0]}"))
+            markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+            bot.edit_message_text("Select Product to Edit:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("edit_prod_"):
+        prod_id = call.data.split("_")[2]
+        user_states[user_id] = {"action": "editing_product", "product_id": prod_id}
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(chat_id, "✏️ Type new Name and Price in format:\n`NewName,Price` (e.g. `Ultra Pack,299`)", parse_mode="Markdown")
+
+    elif call.data == "admin_delete_product":
+        cursor.execute("SELECT id, name FROM products")
+        prods = cursor.fetchall()
+        if not prods:
+            bot.answer_callback_query(call.id, "No products available to delete!", show_alert=True)
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for p in prods:
+                markup.add(types.InlineKeyboardButton(f"❌ {p[1]}", callback_data=f"del_prod_{p[0]}"))
+            markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+            bot.edit_message_text("Select Product to Delete:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("del_prod_"):
+        prod_id = call.data.split("_")[2]
+        cursor.execute("DELETE FROM contents WHERE product_id = ?", (prod_id,))
+        cursor.execute("DELETE FROM products WHERE id = ?", (prod_id,))
+        conn.commit()
+        conn.close()
+        bot.answer_callback_query(call.id, "✅ Product deleted successfully!", show_alert=True)
+        bot.edit_message_text("🔧 *Admin Control Panel:*", chat_id, msg_id, reply_markup=get_admin_inline(user_id), parse_mode="Markdown")
+        return
+
+    elif call.data == "admin_add_content":
+        cursor.execute("SELECT id, name FROM products")
+        prods = cursor.fetchall()
+        if not prods:
+            bot.answer_callback_query(call.id, "No products available!", show_alert=True)
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for p in prods:
+                markup.add(types.InlineKeyboardButton(p[1], callback_data=f"add_cont_to_{p[0]}"))
+            markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+            bot.edit_message_text("Select Product to add content/video/link:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("add_cont_to_"):
+        prod_id = call.data.split("_")[3]
+        user_states[user_id] = {"action": "waiting_for_content", "product_id": prod_id}
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(chat_id, "📁 Ab is product ke liye video, photo, document ya text link bhejein:")
+
+    elif call.data == "admin_edit_content":
+        cursor.execute('''
+            SELECT contents.id, products.name, contents.file_type 
+            FROM contents JOIN products ON contents.product_id = products.id
+        ''')
+        contents = cursor.fetchall()
+        if not contents:
+            bot.answer_callback_query(call.id, "No content available to edit!", show_alert=True)
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for c in contents:
+                markup.add(types.InlineKeyboardButton(f"✏️ [{c[1]}] ID: {c[0]} ({c[2]})", callback_data=f"edit_c_{c[0]}"))
+            markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+            bot.edit_message_text("Select Content to Edit:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("edit_c_"):
+        c_id = call.data.split("_")[2]
+        user_states[user_id] = {"action": "editing_content", "content_id": c_id}
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(chat_id, "✏️ Naya content (video/photo/document/text/link) bhejein jo purane wale ko replace karega:")
+
+    elif call.data == "admin_delete_content":
+        cursor.execute('''
+            SELECT contents.id, products.name, contents.file_type 
+            FROM contents JOIN products ON contents.product_id = products.id
+        ''')
+        contents = cursor.fetchall()
+        if not contents:
+            bot.answer_callback_query(call.id, "No content available to delete!", show_alert=True)
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for c in contents:
+                markup.add(types.InlineKeyboardButton(f"❌ [{c[1]}] ID: {c[0]} ({c[2]})", callback_data=f"del_c_{c[0]}"))
+            markup.add(types.InlineKeyboardButton("⇦ Back", callback_data="back_to_admin"))
+            bot.edit_message_text("Select Content to Delete:", chat_id, msg_id, reply_markup=markup)
+
+    elif call.data.startswith("del_c_"):
+        c_id = call.data.split("_")[2]
+        cursor.execute("DELETE FROM contents WHERE id = ?", (c_id,))
+        conn.commit()
+        conn.close()
+        bot.answer_callback_query(call.id, "✅ Content deleted successfully!", show_alert=True)
+        bot.edit_message_text("🔧 *Admin Control Panel:*", chat_id, msg_id, reply_markup=get_admin_inline(user_id), parse_mode="Markdown")
+        return
+
+    elif call.data == "admin_list_content":
+        if user_id != OWNER_ID:
+            bot.answer_callback_query(call.id, "Only Owner can view this!", show_alert=True)
+            conn.close()
+            return
+        cursor.execute('''
+            SELECT purchase_logs.user_id, purchase_logs.server_name, purchase_logs.product_name, purchase_logs.purchased_at, users.name 
+            FROM purchase_logs 
+            LEFT JOIN users ON purchase_logs.user_id = users.user_id
+            ORDER BY purchase_logs.id DESC LIMIT 30
+        ''')
+        logs = cursor.fetchall()
+        if not logs:
+            bot.answer_callback_query(call.id, "No buyer history found!", show_alert=True)
+            conn.close()
+            return
+
+        text = "📋 *Recent Buyer / Purchase Logs:*\n\n"
+        for l in logs:
+            u_name = l[4] or "Unknown"
+            text += f"👤 *User:* {u_name} (`{l[0]}`)\n🌐 *Server:* {l[1]}\n📦 *Product:* {l[2]}\n🕒 *Time:* `{l[3]}`\n----------------------------------\n"
+
+        if len(text) > 4000:
+            text = text[:4000]
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=get_admin_inline(user_id), parse_mode="Markdown")
+
+    elif call.data == "admin_clear_content":
+        if user_id != OWNER_ID:
+            bot.answer_callback_query(call.id, "Only Owner can clear logs!", show_alert=True)
+            conn.close()
+            return
+        two_months_ago = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("SELECT COUNT(*) FROM purchase_logs WHERE purchased_at < ?", (two_months_ago,))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            bot.answer_callback_query(call.id, "2 months se purani koi buyer list nahi mili!", show_alert=True)
+        else:
+            cursor.execute("DELETE FROM purchase_logs WHERE purchased_at < ?", (two_months_ago,))
+            conn.commit()
+            bot.answer_callback_query(call.id, f"✅ Cleaned! Total {count} old buyer logs removed.", show_alert=True)
+
+    elif call.data == "admin_stats":
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM products")
+        total_prods = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM purchase_logs")
+        total_buyers = cursor.fetchone()[0]
+        conn.close()
+        bot.answer_callback_query(call.id, f"Users: {total_users} | Products: {total_prods} | Purchases: {total_buyers}", show_alert=True)
+
+    elif call.data == "admin_broadcast":
+        if user_id != OWNER_ID:
+            bot.answer_callback_query(call.id, "Only Owner can broadcast!", show_alert=True)
+            conn.close()
+            return
+        user_states[user_id] = {"action": "broadcasting"}
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton("Finish Sending"))
+        bot.delete_message(chat_id, msg_id)
+        bot.send_message(chat_id, "📢 Send message/photo/video to broadcast to all users:", reply_markup=markup)
+
+    elif call.data == "back_to_admin":
+        user_states.pop(user_id, None)
+        bot.edit_message_text("🔧 *Admin Control Panel:*", chat_id, msg_id, reply_markup=get_admin_inline(user_id), parse_mode="Markdown")
+
+    elif call.data == "admin_back_main":
+        user_states.pop(user_id, None)
+        bot.delete_message(chat_id, msg_id)
+
+    conn.close()
+
+
+# ----------------- FLASK SERVER FOR 24/7 HOSTING -----------------
+app = Flask(__name__)
+
+
+@app.route('/')
+def home():
+    return "Viral Bot is Alive!"
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+
+if __name__ == "__main__":
+    try:
+        threading.Thread(target=run_flask, daemon=True).start()
+        print("Bot polling started...", flush=True)
+        bot.remove_webhook()
+        bot.infinity_polling(timeout=50, long_polling_timeout=25, skip_pending=True)
+    except Exception:
+        print("Fatal bot error:", flush=True)
+        traceback.print_exc()
