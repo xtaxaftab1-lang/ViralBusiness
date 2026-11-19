@@ -101,7 +101,7 @@ def init_db():
             "insta viral mms",
             "YouTubers Viral mms",
             "actress viral mms",
-            "Trending Poem Videos",
+            "Trending Porn Videos",
             "Trending Viral Leak mms"
         ]
         for s in default_servers:
@@ -124,7 +124,7 @@ def get_main_keyboard(user_id):
     conn.close()
 
     ordered_names = [
-        "Insta viral mms",
+        "insta viral mms",
         "YouTubers Viral mms",
         "actress viral mms",
         "Trending Porn Videos",
